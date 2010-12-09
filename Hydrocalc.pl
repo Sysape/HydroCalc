@@ -11,7 +11,18 @@ use constant g => 9.81;
 #Declare vars for pipe diameter, gross head, pipe length, roughness,
 #percentage of flow over Q95
 #which are provide on the command line
-my ($dia, $hg, $len, $eps, $percy) = @ARGV;
+my ($dia, $hg, $len, $eps, $perc, $limit, $percy) = @ARGV;
+# perform a check to see we have the right number of vars passed in and give
+# usage information if not.
+
+my $usage = "This script requires 7 variables: Pipe diamter(m), gross head(m),
+penstock length(m), pipe friction factor, % of flow allowed above Q95,
+Qn for secondary %, % of flow allowed above Qn.
+
+Something like Hydrocalc.pl 0.5 23 250 0.06 50 60 60\n";
+my $count = @ARGV;
+die $usage unless $count == 7;
+
 # Declare three vars for stuffing results into.
 my ($hydra, $low, $dyfi);
 
@@ -28,6 +39,16 @@ while (<HYDRA>){
 	my @input = split(/,/);
 	my $Q = $input[1];
 	my $exceed = $input[2];
+	# we need to take into account the flow regime allowed.
+	# we're not allowed any of the Q95 flow 
+	next if $exceed >= 95;
+	# $limit contains the Qn of the exceedence above which we can take
+	# $percy percent. $perc is the percentage we're allowed over Q95
+	if ($exceed >= $limit){
+		$Q = $Q*$percy/100;
+	}else{
+		$Q = $Q*$perc/100;
+	}
 	$hydra->{$exceed} = darcy($Q);
 }
 
@@ -37,6 +58,12 @@ while (<LOW>){
 	my @input = split(/,/);
 	my $Q = $input[1];
 	my $exceed = $input[0];
+	next if $exceed >= 95;
+	if ($exceed >= $limit){
+		$Q = $Q*$percy/100;
+	}else{
+		$Q = $Q*$perc/100;
+	}
 	$low->{$exceed} = darcy($Q);
 }
 
