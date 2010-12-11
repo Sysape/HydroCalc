@@ -26,25 +26,70 @@ die $usage unless $count == 8;
 # Declare three vars for stuffing results into.
 my ($hydra, $low, $dyfi);
 
-# we now need to open the three different flow rate files and calculate the 
-# available flow based on the flow regime we're likely to have
+# we now need to open the three different flow rate files.
 
-open (LOW, '<',"lowflows.csv") or die "can't open lowflows";
-open (HYDRA, '<',"hydra.csv") or die "can't open hydra";
+open (my $lowin, '<',"lowflows.csv") or die "can't open lowflows";
+open (my $hydrain, '<',"hydra.csv") or die "can't open hydra";
 #open (DYFI, '<',"Dyfi.csv") or die "can't open Dyfi";
 
-# We want to stuff the files into arrays, all nicely cleaned up and the w**k
-# with the array as we need to do many passes over the data.
+# We want to stuff the files into a hash of arrays, all nicely cleaned up
+# and then w**k with the array as we need to do many passes over the data.
 
-while (<HYDRA>){
+while (<$hydrain>){
 	next unless m/[\d\.]+,[\d\.]+,[\d\.]+,[\d\.-]+/;
 	chomp $_;
 	my @input = split(/,/);
-	my $Q = $input[1];
-	my $exceed = $input[2];
-	# we need to take into account the flow regime allowed.
-	# we're not allowed any of the Q95 flow 
-	next if $exceed >= 95;
+	push (@{$hydra->{'Q'}}, $input[1]);
+	push (@{$hydra->{'exceed'}}, $input[2]);
+}
+while (<$lowin>){
+	next unless m/[\d\.]+,[\d\.]/;
+	chomp $_;
+	my @input = split(/,/);
+	push (@{$low->{'Q'}}, $input[1]);
+	push (@{$low->{'exceed'}}, $input[0]);
+}
+
+# we need a turbine efficiency subroutine that takes a design flworate,
+# an actual flowrate and a turbine type and does a cubic spline on the
+# table of part-efficiences returning the effciency for that flowrate
+sub eff {
+	my $Qdesign = shift;
+	my $Q = shift;
+	my $turbine = shift;
+	# now we need to set up 'tables' for the cubic spline code to work on.
+	# these valus have been read from the graph in the Micro Hydro design
+	# book pg 156 which plots flow-fration against effciency.
+	my $pelton->{'ff'} => (
+
+# We need a subroutine to calculate the power input to the turbine for a
+# given flowrate.
+sub power {
+	my $Q = shift;
+	# call the flowr subroutine to scale the flow rate based on the flow
+	# regime.
+	$Q = flowr($Q);
+	# call the darcy sub to work out head loss due to friction
+	my $hf = darcy($Q);
+	# call the turbulence sub to work out head loss due to valves, bends &c.
+	my $ht = turb($Q);
+	# so the net head is the gross head minus the losses.
+	my $hn = $hg-$ht-$hf ;
+	# now we can calulate the input power to the turbine at this flowrate
+	# and return it.
+	return 10*$Q*$hn;
+}
+
+# we need to take into account the flow regime allowed. We're not allowed
+# any of the Q95 flow and the commandline vars in $perc, $limit, $percy 
+# define the % over Q95 and the % over $limit we are allowed to take.
+# this subroutine takes a pair of values, the flow rate and the exceedence
+# for that flow rate and then modifies $Q to take into account the flow 
+# regime and then returns that.
+sub flowr {
+	my $q = shift;
+	my $exceed = shift;
+	$Q = 0 if $exceed >= 95;
 	# $limit contains the Qn of the exceedence above which we can take
 	# $percy percent. $perc is the percentage we're allowed over Q95
 	if ($exceed >= $limit){
@@ -52,40 +97,7 @@ while (<HYDRA>){
 	}else{
 		$Q = $Q*$perc/100;
 	}
-	# call the darcy sub to work out head loss due to friction
-	my $hf = darcy($Q);
-	# call the turbulence sub to work out head loss due to valves, bends &c.
-	my $ht = turb($Q);
-	# so the net head is the gross head minus the losses.
-	my $hn = $hg-$ht-$hf ;
-	# now we can calulate the input power to the turbine at this flowrate
-	my $power = 10*$Q*$hn;
-	# ok let's pack that into the output
-	$hydra->{$exceed} = $power;
-}
-
-while (<LOW>){
-	next unless m/[\d\.]+,[\d\.]/;
-	chomp $_;
-	my @input = split(/,/);
-	my $Q = $input[1];
-	my $exceed = $input[0];
-	next if $exceed >= 95;
-	if ($exceed >= $limit){
-		$Q = $Q*$percy/100;
-	}else{
-		$Q = $Q*$perc/100;
-	}
-	# call the darcy sub to work out head loss due to friction
-	my $hf = darcy($Q);
-	# call the turbulence sub to work out head loss due to valves, bends &c.
-	my $ht = turb($Q);
-	# so the net head is the gross head minus the losses.
-	my $hn = $hg-$ht-$hf ;
-	# now we can calulate the input power to the turbine at this flowrate
-	my $power = 10*$Q*$hn;
-	# ok let's pack that into the output
-	$low->{$exceed} = $power;
+	return $Q;
 }
 
 print Dump( $hydra ), "\n";
