@@ -1,6 +1,7 @@
 #!/usr/bin/perl -Tw
 use strict;
 use YAML;
+use Math::Spline;
 # set a constant PI = to pi
 use constant PI => 4 * atan2(1, 1);
 # set a value for nu, the kinematic viscosity of water
@@ -50,6 +51,13 @@ while (<$lowin>){
 	push (@{$low->{'exceed'}}, $input[0]);
 }
 
+# Just a quick hacky test for the effciency spline calc.
+for (my $Q = 0; $Q < 25; $Q++){
+	my $output = eff(24,$Q,'pelton');
+	print $output,"\n";
+}
+	
+
 # we need a turbine efficiency subroutine that takes a design flworate,
 # an actual flowrate and a turbine type and does a cubic spline on the
 # table of part-efficiences returning the effciency for that flowrate
@@ -60,7 +68,33 @@ sub eff {
 	# now we need to set up 'tables' for the cubic spline code to work on.
 	# these valus have been read from the graph in the Micro Hydro design
 	# book pg 156 which plots flow-fration against effciency.
-	my $pelton->{'ff'} => (
+	my $table;
+	# first for the pelton/turgo
+	push (@{$table->{'pelton'}->{'ff'}},
+			(0.07,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
+	push (@{$table->{'pelton'}->{'eff'}},
+			(0,0.68,0.82,0.85,0.86,0.86,0.86,0.85,0.85,0.82));
+	# then for an engineered cross-flow.
+	push (@{$table->{'cross'}->{'ff'}},
+			(0.07,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
+	push (@{$table->{'cross'}->{'eff'}},
+			(0,0.63,0.75,0.78,0.79,0.80,0.81,0.81,0.79,0.78,0.82));
+	# Frances
+	push (@{$table->{'frances'}->{'ff'}},
+			(0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
+	push (@{$table->{'frances'}->{'eff'}},
+			(0,0.40,0.59,0.70,0.78,0.86,0.91,0.91,0.86));
+	# Prop
+	push (@{$table->{'prop'}->{'ff'}}, (0.36,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
+	push (@{$table->{'prop'}->{'eff'}},
+			(0,0.12,0.35,0.50,0.68,0.76,0.85,0.90));
+	# we now need to create a Maths::Spline object for the correct turbine
+	my $spline=new Math::Spline
+			($table->{$turbine}->{'ff'},$table->{$turbine}->{'eff'});
+	# and return the value for the part-flow in question.
+	print 'Foo:',$spline->evaluate('0.7222'),"\n";
+	return $spline->evaluate($Q/$Qdesign);
+}
 
 # We need a subroutine to calculate the power input to the turbine for a
 # given flowrate.
@@ -87,7 +121,7 @@ sub power {
 # for that flow rate and then modifies $Q to take into account the flow 
 # regime and then returns that.
 sub flowr {
-	my $q = shift;
+	my $Q = shift;
 	my $exceed = shift;
 	$Q = 0 if $exceed >= 95;
 	# $limit contains the Qn of the exceedence above which we can take
