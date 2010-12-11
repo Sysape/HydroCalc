@@ -56,9 +56,32 @@ for (my $Q = 0; $Q < 25; $Q++){
 	my $output = eff(24,$Q,'pelton');
 	print $output,"\n";
 }
-	
 
-# we need a turbine efficiency subroutine that takes a design flworate,
+# So we want to know the annaul energy output of a turbine installed on a river
+# with the flows specified in the input files. 
+
+print Dump( $hydra ), "\n";
+print Dump( $low ), "\n";
+
+# We need a specific speed subroutine that works out the specific speed of
+# the turbine and returns what types of turbine would be suitable for that
+# specific speed.
+sub speed {
+	my $rpm = shift;
+	my $power = shift;
+	my $h = shift;
+	my $speed = 1.2*$rpm*$power**0.5/$h**1.5;	
+	my @turbines;
+	if ($speed > 12 && $speed < 30){push (@turbines,'pelton');}
+	if ($speed > 20 && $speed < 70){push (@turbines,'turgo');}
+	if ($speed > 20 && $speed < 80){push (@turbines,'cross');}
+	if ($speed > 80 && $speed < 400){push (@turbines,'francis');}
+	if ($speed > 340 && $speed < 1000){push (@turbines,'prop');}
+	return @turbines;
+}
+
+
+# we need a turbine efficiency subroutine that takes a design flowrate,
 # an actual flowrate and a turbine type and does a cubic spline on the
 # table of part-efficiences returning the effciency for that flowrate
 sub eff {
@@ -80,9 +103,9 @@ sub eff {
 	push (@{$table->{'cross'}->{'eff'}},
 			(0,0.63,0.75,0.78,0.79,0.80,0.81,0.81,0.79,0.78,0.82));
 	# Frances
-	push (@{$table->{'frances'}->{'ff'}},
+	push (@{$table->{'francis'}->{'ff'}},
 			(0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
-	push (@{$table->{'frances'}->{'eff'}},
+	push (@{$table->{'francis'}->{'eff'}},
 			(0,0.40,0.59,0.70,0.78,0.86,0.91,0.91,0.86));
 	# Prop
 	push (@{$table->{'prop'}->{'ff'}}, (0.36,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
@@ -92,7 +115,7 @@ sub eff {
 	my $spline=new Math::Spline
 			($table->{$turbine}->{'ff'},$table->{$turbine}->{'eff'});
 	# and return the value for the part-flow in question.
-	print 'Foo:',$spline->evaluate('0.7222'),"\n";
+	print 'Foo:',$spline->evaluate('1'),"\n";
 	return $spline->evaluate($Q/$Qdesign);
 }
 
@@ -133,9 +156,6 @@ sub flowr {
 	}
 	return $Q;
 }
-
-print Dump( $hydra ), "\n";
-print Dump( $low ), "\n";
 
 # We want a function to calculate the Reynolds number
 
