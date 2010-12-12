@@ -61,7 +61,7 @@ my @speeds = (3000,1500,1125,1000,750,500,375);
 # a good starting point is probably the 50% exceedence and the max
 # flowrate is for exceedence = 1.99%
 my ($energy,$answer);
-for(my $Qdesign = $hydra->{'50.00'}; $Qdesign < $hydra->{'1.99'};
+for(my $Qdesign = $hydra->{'89.92'}; $Qdesign < $hydra->{'1.99'};
 		$Qdesign += 0.01){
 	# so then we calculate the power output for that flow
 	my ($power,$head) = power($Qdesign,50);
@@ -79,14 +79,19 @@ for(my $Qdesign = $hydra->{'50.00'}; $Qdesign < $hydra->{'1.99'};
 	# then we step through the generated list of turbines and workout the
 	# annual energy output.
 	foreach my $turbine (@turbines){
-		# The step through the exceedence array and tot up the energy.
-		foreach my $key (keys (%$hydra)){
+		# The step through the exceedence hash and tot up the energy.
+		# we want the array sorted from high % to low
+		foreach my $key (sort{$b <=> $a} keys (%$hydra)){
 			# the flowrate can't be more than the design flowrate so we use
 			# the Tenary operatory to ensure that.
 			my $Q = $hydra->{$key} < $Qdesign ? $hydra->{$key} : $Qdesign;
 			my ($p,$hn) = power($Q,$key);
 			my $eff = eff($Qdesign,$hydra->{$key},$turbine);
-			$energy->{$turbine} += ((100-$key)/100)*$p*$eff;
+			# we want to work out the percentage of time the flow happens
+			# so we need to subtract the last % from the current %
+			my $last = 100;
+			$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
+			$last = $key;
 		}
 	# check to see if we've found a better Design flow and if so set the 
 	# answer energy and answer flowrate for the turbines in question.
@@ -97,7 +102,7 @@ for(my $Qdesign = $hydra->{'50.00'}; $Qdesign < $hydra->{'1.99'};
 	}
 }
 # and then do all that again with the lowflows stuff
-for(my $Qdesign = $low->{'50'}; $Qdesign < $low->{'5'};
+for(my $Qdesign = $low->{'80'}; $Qdesign < $low->{'5'};
 		$Qdesign += 0.01){
 	my ($power,$head) = power($Qdesign,50);
 	my @turbines;
@@ -108,11 +113,13 @@ for(my $Qdesign = $low->{'50'}; $Qdesign < $low->{'5'};
 		$answer->{'low'}->{$_}->{'nrg'} = 0;
 	}
 	foreach my $turbine (@turbines){
-		foreach my $key (keys (%$low)){
+		foreach my $key (sort{$b <=> $a}keys (%$low)){
 			my $Q = $low->{$key} < $Qdesign ? $low->{$key} : $Qdesign;
 			my ($p,$hn) = power($low->{$key},$key);
 			my $eff = eff($Qdesign,$low->{$key},$turbine);
-			$energy->{$turbine} += ((100-$key)/100)*$p*$eff;
+			my $last = 100;
+			$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
+			$last = $key;
 		}
 		unless ($answer->{'low'}->{$turbine}->{'nrg'} > $energy->{$turbine}){
 		 	$answer->{'low'}->{$turbine}->{'nrg'} =  $energy->{$turbine};
@@ -241,11 +248,14 @@ sub colebrook {
 	my $Re = reynolds($Q);
 	my $f = 1;
 	my $fn = 0;
+	my $step = 0.1;
 	# use a while loop to iteratively solve the c-w equation using steps of
-	# 0.000001
-	while ($f > $fn){
-		$fn = (1/(-2.0*log10($eps/(3.7*$dia)+2.51/($Re*$f**0.5))))**2;
-		$f = $f - 0.000001;
+	while ($step > 0.0000001){
+		while ($f > $fn){
+			$fn = (1/(-2.0*log10($eps/(3.7*$dia)+2.51/($Re*$f**0.5))))**2;
+			$f = $f - $step unless $f < $fn;
+		}
+	$step = $step/10;
 	}
 	return $fn;
 }
