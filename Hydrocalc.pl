@@ -24,7 +24,7 @@ Something like Hydrocalc.pl 0.5 23 250 0.06 50 60 60 1.15\n";
 my $count = @ARGV;
 die $usage unless $count == 8;
 
-# Declare three vars for stuffing results into.
+# Declare three vars for stuffing input into.
 my ($hydra, $low, $dyfi);
 
 # we now need to open the three different flow rate files.
@@ -40,28 +40,90 @@ while (<$hydrain>){
 	next unless m/[\d\.]+,[\d\.]+,[\d\.]+,[\d\.-]+/;
 	chomp $_;
 	my @input = split(/,/);
-	push (@{$hydra->{'Q'}}, $input[1]);
-	push (@{$hydra->{'exceed'}}, $input[2]);
+	$hydra->{$input[2]} = $input[1];
 }
 while (<$lowin>){
 	next unless m/[\d\.]+,[\d\.]/;
 	chomp $_;
 	my @input = split(/,/);
-	push (@{$low->{'Q'}}, $input[1]);
-	push (@{$low->{'exceed'}}, $input[0]);
+	$low->{$input[0]} = $input[1];
 }
 
-# Just a quick hacky test for the effciency spline calc.
-for (my $Q = 0; $Q < 25; $Q++){
-	my $output = eff(24,$Q,'pelton');
-	print $output,"\n";
+# we need a var with a sensible set of shaft speeds in it. Ideally we'd like
+# 1500rpm but we can also easily do 2x that, and 3/4 2/3 1/2 1/3 1/4 with 
+# a belt drive.
+my @speeds = (3000,1500,1125,1000,750,500,375);
+
+# So we want to know the maximum annual energy output of a turbine
+# installed on a river with the flows specified in the input files. 
+# we need to choose a design flow and then iterate through flows 
+# calculating the energy output until we find the maximum output.
+# a good starting point is probably the 50% exceedence and the max
+# flowrate is for exceedence = 1.99%
+my ($energy,$answer);
+for(my $Qdesign = $hydra->{'50.00'}; $Qdesign < $hydra->{'1.99'};
+		$Qdesign += 0.01){
+	# so then we calculate the power output for that flow
+	my ($power,$head) = power($Qdesign,50);
+	# from that we can workout which turbines we might use. We want to step
+	# through the @speeds array and call the specific speed sub to give us
+	# a list of possible trbines to use.
+	my @turbines;
+	foreach (@speeds){
+		push (@turbines, speed($_,$power,$head));
+	}
+	# we need to set $answer->{$turbine} to a low value for the first iteration
+	foreach (@turbines){
+		$answer->{'hydra'}->{$_}->{'nrg'} = 0;
+	}
+	# then we step through the generated list of turbines and workout the
+	# annual energy output.
+	foreach my $turbine (@turbines){
+		# The step through the exceedence array and tot up the energy.
+		foreach my $key (keys (%$hydra)){
+			# the flowrate can't be more than the design flowrate so we use
+			# the Tenary operatory to ensure that.
+			my $Q = $hydra->{$key} < $Qdesign ? $hydra->{$key} : $Qdesign;
+			my ($p,$hn) = power($Q,$key);
+			my $eff = eff($Qdesign,$hydra->{$key},$turbine);
+			$energy->{$turbine} += ((100-$key)/100)*$p*$eff;
+		}
+	# check to see if we've found a better Design flow and if so set the 
+	# answer energy and answer flowrate for the turbines in question.
+		unless ($answer->{'hydra'}->{$turbine}->{'nrg'} > $energy->{$turbine}){
+		 	$answer->{'hydra'}->{$turbine}->{'nrg'} =  $energy->{$turbine};
+			$answer->{'hydra'}->{$turbine}->{'QDesign'} = $Qdesign;
+		}
+	}
+}
+# and then do all that again with the lowflows stuff
+for(my $Qdesign = $low->{'50'}; $Qdesign < $low->{'5'};
+		$Qdesign += 0.01){
+	my ($power,$head) = power($Qdesign,50);
+	my @turbines;
+	foreach (@speeds){
+		push (@turbines, speed($_,$power,$head));
+	}
+	foreach (@turbines){
+		$answer->{'low'}->{$_}->{'nrg'} = 0;
+	}
+	foreach my $turbine (@turbines){
+		foreach my $key (keys (%$low)){
+			my $Q = $low->{$key} < $Qdesign ? $low->{$key} : $Qdesign;
+			my ($p,$hn) = power($low->{$key},$key);
+			my $eff = eff($Qdesign,$low->{$key},$turbine);
+			$energy->{$turbine} += ((100-$key)/100)*$p*$eff;
+		}
+		unless ($answer->{'low'}->{$turbine}->{'nrg'} > $energy->{$turbine}){
+		 	$answer->{'low'}->{$turbine}->{'nrg'} =  $energy->{$turbine};
+			$answer->{'low'}->{$turbine}->{'QDesign'} = $Qdesign;
+		}
+	}
 }
 
-# So we want to know the annaul energy output of a turbine installed on a river
-# with the flows specified in the input files. 
+# print out the answer
 
-print Dump( $hydra ), "\n";
-print Dump( $low ), "\n";
+print Dump($answer);
 
 # We need a specific speed subroutine that works out the specific speed of
 # the turbine and returns what types of turbine would be suitable for that
@@ -88,6 +150,8 @@ sub eff {
 	my $Qdesign = shift;
 	my $Q = shift;
 	my $turbine = shift;
+	# the pelton and the turgo share the same efficiency curve.
+	$turbine = 'pelton' if $turbine eq 'turgo';
 	# now we need to set up 'tables' for the cubic spline code to work on.
 	# these valus have been read from the graph in the Micro Hydro design
 	# book pg 156 which plots flow-fration against effciency.
@@ -96,7 +160,7 @@ sub eff {
 	push (@{$table->{'pelton'}->{'ff'}},
 			(0.07,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
 	push (@{$table->{'pelton'}->{'eff'}},
-			(0,0.68,0.82,0.85,0.86,0.86,0.86,0.85,0.85,0.82));
+			(0,0.68,0.82,0.85,0.86,0.86,0.86,0.85,0.85,0.82,0.8));
 	# then for an engineered cross-flow.
 	push (@{$table->{'cross'}->{'ff'}},
 			(0.07,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
@@ -115,7 +179,6 @@ sub eff {
 	my $spline=new Math::Spline
 			($table->{$turbine}->{'ff'},$table->{$turbine}->{'eff'});
 	# and return the value for the part-flow in question.
-	print 'Foo:',$spline->evaluate('1'),"\n";
 	return $spline->evaluate($Q/$Qdesign);
 }
 
@@ -123,18 +186,25 @@ sub eff {
 # given flowrate.
 sub power {
 	my $Q = shift;
+	my $exceed = shift;
 	# call the flowr subroutine to scale the flow rate based on the flow
 	# regime.
-	$Q = flowr($Q);
+	$Q = flowr($Q, $exceed);
+	# break out of calc and return 0 if the flowrate is 0
+	return 0 if $Q == 0;
 	# call the darcy sub to work out head loss due to friction
 	my $hf = darcy($Q);
 	# call the turbulence sub to work out head loss due to valves, bends &c.
 	my $ht = turb($Q);
 	# so the net head is the gross head minus the losses.
 	my $hn = $hg-$ht-$hf ;
+	# if the nethead/grosshead is less than 0.9 then we need to consider a
+	# fatter pipe.
+	die 'Warning unaccaptable losses', $hn/$hg, "remains try a fatter pipe \n" 
+		if $hn/$hg < 0.9;
 	# now we can calulate the input power to the turbine at this flowrate
 	# and return it.
-	return 10*$Q*$hn;
+	return (10*$Q*$hn,$hn);
 }
 
 # we need to take into account the flow regime allowed. We're not allowed
