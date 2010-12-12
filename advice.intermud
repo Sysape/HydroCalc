@@ -1,0 +1,8 @@
+Detah@Dead Souls Dev <dchat> try alpha=.1, .2, .3, .4, etc. solve for each
+one. find the two 'endpoints' which must contain the optimal value. lets say
+they are .3 and .4. Then try .35. locate end points. try .33. and so on, until
+you get it down to .321546789 the decimal level you want. this will minimize
+the number of times you solve the main equationo.
+Quixadhal@Bloodlines <dchat> you could move $eps/(3.7*$dia) outside the loop
+as a single constant.
+
