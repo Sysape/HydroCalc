@@ -5,7 +5,7 @@ use Math::Spline;
 # set a constant PI = to pi
 use constant PI => 4 * atan2(1, 1);
 # set a value for nu, the kinematic viscosity of water
-use constant nu => 0.000000131;
+use constant nu => 0.00000131;
 # set a value for the acceleration due to gravity
 use constant g => 9.81;
 
@@ -26,7 +26,8 @@ die $usage unless $count == 8;
 
 # Declare three vars for stuffing input into.
 my ($hydra, $low, $dyfi);
-
+# declare 2 vars for output
+my ($energy,$answer);
 # we now need to open the three different flow rate files.
 
 open (my $lowin, '<',"lowflows.csv") or die "can't open lowflows";
@@ -42,88 +43,118 @@ while (<$hydrain>){
 	my @input = split(/,/);
 	$hydra->{$input[2]} = $input[1];
 }
+# we need to create a spline object for these data so we can find the 
+my @hexceed = keys %$hydra;
+my @hflows = values %$hydra;
+my $hex = new Math::Spline (\@hexceed, \@hflows);
 while (<$lowin>){
 	next unless m/[\d\.]+,[\d\.]/;
 	chomp $_;
 	my @input = split(/,/);
 	$low->{$input[0]} = $input[1];
 }
-
+my @lexceed = keys %$low;
+my @lflows = values %$low;
+my $lex = new Math::Spline (\@lexceed, \@lflows);
 # we need a var with a sensible set of shaft speeds in it. Ideally we'd like
 # 1500rpm but we can also easily do 2x that, and 3/4 2/3 1/2 1/3 1/4 with 
 # a belt drive.
 my @speeds = (3000,1500,1125,1000,750,500,375);
+# we need to set $answer->{$turbine} to a low value for the first iteration
+foreach (@speeds) {
+	my $speed = $_;
+	my @turbines = qw(pelton turgo cross francis prop);
+	foreach (@turbines){ 
+		$answer->{$speed}->{'hydra'}->{$_}->{'nrg'} = 0;
+		$answer->{$speed}->{'low'}->{$_}->{'nrg'} = 0;
+	}
+}
 
 # So we want to know the maximum annual energy output of a turbine
 # installed on a river with the flows specified in the input files. 
 # we need to choose a design flow and then iterate through flows 
 # calculating the energy output until we find the maximum output.
-# a good starting point is probably the 50% exceedence and the max
-# flowrate is for exceedence = 1.99%
-my ($energy,$answer);
-for(my $Qdesign = $hydra->{'89.92'}; $Qdesign < $hydra->{'1.99'};
-		$Qdesign += 0.01){
+# the max flowrate is for exceedence = 1.99%
+for(my $Qdesign = 0.01; $Qdesign < $hydra->{'1.99'}; $Qdesign += 0.01){
+	# we need to know the exceedence to calculate the power out
+	my $exceed = $hex->evaluate($Qdesign);
 	# so then we calculate the power output for that flow
-	my ($power,$head) = power($Qdesign,50);
+	#print "Q: $Qdesign exceed: $exceed\n";
+	my ($power,$head) = power($Qdesign,$exceed);
+	#warn "$power $head\n";
 	# from that we can workout which turbines we might use. We want to step
 	# through the @speeds array and call the specific speed sub to give us
 	# a list of possible trbines to use.
-	my @turbines;
+	my $turbines;
 	foreach (@speeds){
-		push (@turbines, speed($_,$power,$head));
+		push (@{$turbines->{$_}}, speed($_,$power,$head));
 	}
-	# we need to set $answer->{$turbine} to a low value for the first iteration
-	foreach (@turbines){
-		$answer->{'hydra'}->{$_}->{'nrg'} = 0;
-	}
+	#print Dump($turbines),"\n";
 	# then we step through the generated list of turbines and workout the
 	# annual energy output.
-	foreach my $turbine (@turbines){
-		# The step through the exceedence hash and tot up the energy.
-		# we want the array sorted from high % to low
-		foreach my $key (sort{$b <=> $a} keys (%$hydra)){
-			# the flowrate can't be more than the design flowrate so we use
-			# the Tenary operatory to ensure that.
-			my $Q = $hydra->{$key} < $Qdesign ? $hydra->{$key} : $Qdesign;
-			my ($p,$hn) = power($Q,$key);
-			my $eff = eff($Qdesign,$hydra->{$key},$turbine);
-			# we want to work out the percentage of time the flow happens
-			# so we need to subtract the last % from the current %
+	foreach (@speeds){
+		my $speed = $_;
+		foreach my $turbine (@{$turbines->{$speed}}){
+			# We need to set a value for last outside the loop.
 			my $last = 100;
-			$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
-			$last = $key;
-		}
-	# check to see if we've found a better Design flow and if so set the 
-	# answer energy and answer flowrate for the turbines in question.
-		unless ($answer->{'hydra'}->{$turbine}->{'nrg'} > $energy->{$turbine}){
-		 	$answer->{'hydra'}->{$turbine}->{'nrg'} =  $energy->{$turbine};
-			$answer->{'hydra'}->{$turbine}->{'QDesign'} = $Qdesign;
+			# Then step through the exceedence hash and tot up the energy.
+			# we want the array sorted from high % to low
+			foreach my $key (sort{$b <=> $a} keys (%$hydra)){
+				# the flowrate can't be more than the design flowrate so we use
+				# the Tenary operatory to ensure that.
+				my $Q = $hydra->{$key} < $Qdesign ? $hydra->{$key} : $Qdesign;
+				my ($p,$hn) = power($Q,$key);
+				my $eff = eff($Qdesign,$Q,$turbine);
+				#warn "Eff:$eff Q:$Q power:$p\n";
+				# we want to work out the percentage of time the flow happens
+				# so we need to subtract the last % from the current %
+				$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
+				$last = $key;
+			}
+			#print "$turbine: Q: $Qdesign Energy $energy->{$turbine}\n";
+			# check to see if we've found a better Design flow and if so set
+			# the answer energy and answer flowrate for the turbines in
+			# question.
+			unless ($answer->{$speed}->{'hydra'}->{$turbine}->{'nrg'}
+			> $energy->{$turbine}){
+			 	$answer->{$speed}->{'hydra'}->{$turbine}->{'nrg'}
+						= $energy->{$turbine};
+				$answer->{$speed}->{'hydra'}->{$turbine}->{'QDesign'}
+						= $Qdesign;
+				$answer->{$speed}->{'hydra'}->{$turbine}->{'exceed'} = $exceed;
+				$energy->{$turbine} = 0;
+			}
 		}
 	}
 }
 # and then do all that again with the lowflows stuff
-for(my $Qdesign = $low->{'80'}; $Qdesign < $low->{'5'};
-		$Qdesign += 0.01){
-	my ($power,$head) = power($Qdesign,50);
-	my @turbines;
+#for(my $Qdesign = $low->{'50'}; $Qdesign < $low->{'5'};
+for(my $Qdesign = 0.01; $Qdesign < $low->{'5'}; $Qdesign += 0.01){
+	my $exceed = $lex->evaluate($Qdesign);
+	my ($power,$head) = power($Qdesign,$exceed);
+	my $turbines;
 	foreach (@speeds){
-		push (@turbines, speed($_,$power,$head));
+		push (@{$turbines->{$_}}, speed($_,$power,$head));
 	}
-	foreach (@turbines){
-		$answer->{'low'}->{$_}->{'nrg'} = 0;
-	}
-	foreach my $turbine (@turbines){
-		foreach my $key (sort{$b <=> $a}keys (%$low)){
-			my $Q = $low->{$key} < $Qdesign ? $low->{$key} : $Qdesign;
-			my ($p,$hn) = power($low->{$key},$key);
-			my $eff = eff($Qdesign,$low->{$key},$turbine);
+	foreach (@speeds){
+		my $speed = $_;
+		foreach my $turbine (@{$turbines->{$speed}}){
 			my $last = 100;
-			$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
-			$last = $key;
-		}
-		unless ($answer->{'low'}->{$turbine}->{'nrg'} > $energy->{$turbine}){
-		 	$answer->{'low'}->{$turbine}->{'nrg'} =  $energy->{$turbine};
-			$answer->{'low'}->{$turbine}->{'QDesign'} = $Qdesign;
+			foreach my $key (sort{$b <=> $a}keys (%$low)){
+				my $Q = $low->{$key} < $Qdesign ? $low->{$key} : $Qdesign;
+				my ($p,$hn) = power($Q,$key);
+				my $eff = eff($Qdesign,$Q,$turbine);
+				$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
+				$last = $key;
+			}
+			unless ($answer->{$speed}->{'low'}->{$turbine}->{'nrg'}
+				> $energy->{$turbine}){
+			 	$answer->{$speed}->{'low'}->{$turbine}->{'nrg'}
+					= $energy->{$turbine};
+				$answer->{$speed}->{'low'}->{$turbine}->{'QDesign'} = $Qdesign;
+				$answer->{$speed}->{'low'}->{$turbine}->{'exceed'} = $exceed;
+				$energy->{$turbine} = 0;
+			}
 		}
 	}
 }
@@ -173,7 +204,7 @@ sub eff {
 			(0.07,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
 	push (@{$table->{'cross'}->{'eff'}},
 			(0,0.63,0.75,0.78,0.79,0.80,0.81,0.81,0.79,0.78,0.82));
-	# Frances
+	# Francis
 	push (@{$table->{'francis'}->{'ff'}},
 			(0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0));
 	push (@{$table->{'francis'}->{'eff'}},
@@ -185,8 +216,11 @@ sub eff {
 	# we now need to create a Maths::Spline object for the correct turbine
 	my $spline=new Math::Spline
 			($table->{$turbine}->{'ff'},$table->{$turbine}->{'eff'});
-	# and return the value for the part-flow in question.
-	return $spline->evaluate($Q/$Qdesign);
+	# calculate the efficiency value for the part-flow in question.
+	my $eff = $spline->evaluate($Q/$Qdesign);
+	# the spline gives us efficiency values < 0 which is meaningless so 
+	# we set those to 0
+	return $eff > 0 ? $eff : 0;
 }
 
 # We need a subroutine to calculate the power input to the turbine for a
@@ -198,7 +232,7 @@ sub power {
 	# regime.
 	$Q = flowr($Q, $exceed);
 	# break out of calc and return 0 if the flowrate is 0
-	return 0 if $Q == 0;
+	return (0,0) if $Q == 0;
 	# call the darcy sub to work out head loss due to friction
 	my $hf = darcy($Q);
 	# call the turbulence sub to work out head loss due to valves, bends &c.
@@ -207,7 +241,8 @@ sub power {
 	my $hn = $hg-$ht-$hf ;
 	# if the nethead/grosshead is less than 0.9 then we need to consider a
 	# fatter pipe.
-	die 'Warning unaccaptable losses', $hn/$hg, "remains try a fatter pipe \n" 
+	die 'Warning unaccaptable losses ', $hn/$hg,
+									" remains try a fatter pipe \n" 
 		if $hn/$hg < 0.9;
 	# now we can calulate the input power to the turbine at this flowrate
 	# and return it.
