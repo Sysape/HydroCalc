@@ -1,4 +1,20 @@
 #!/usr/bin/perl -Tw
+
+# Copyright Michael J G Day, 2010
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 use strict;
 use YAML;
 use Math::Spline;
@@ -97,6 +113,8 @@ for(my $Qdesign = 0.01; $Qdesign < $hydra->{'1.99'}; $Qdesign += 0.01){
 		foreach my $turbine (@{$turbines->{$speed}}){
 			# We need to set a value for last outside the loop.
 			my $last = 100;
+			# declare a var to pass the headloss to the user
+			my $loss = 0;
 			# Then step through the exceedence hash and tot up the energy.
 			# we want the array sorted from high % to low
 			foreach my $key (sort{$b <=> $a} keys (%$hydra)){
@@ -110,18 +128,21 @@ for(my $Qdesign = 0.01; $Qdesign < $hydra->{'1.99'}; $Qdesign += 0.01){
 				# so we need to subtract the last % from the current %
 				$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
 				$last = $key;
+				# also store the max head loss in $loss
+				$loss = 1 - $hn/$hg if $loss < 1 - $hn/$hg && $hn != 0;
 			}
 			#print "$turbine: Q: $Qdesign Energy $energy->{$turbine}\n";
 			# check to see if we've found a better Design flow and if so set
 			# the answer energy and answer flowrate for the turbines in
 			# question.
 			unless ($answer->{$speed}->{'hydra'}->{$turbine}->{'nrg'}
-			> $energy->{$turbine}){
+			> $energy->{$turbine}*8760){
 			 	$answer->{$speed}->{'hydra'}->{$turbine}->{'nrg'}
-						= $energy->{$turbine};
+						= $energy->{$turbine}*8760;
 				$answer->{$speed}->{'hydra'}->{$turbine}->{'QDesign'}
 						= $Qdesign;
 				$answer->{$speed}->{'hydra'}->{$turbine}->{'exceed'} = $exceed;
+				$answer->{$speed}->{'hydra'}->{$turbine}->{'head loss'} = $loss;
 				$energy->{$turbine} = 0;
 			}
 		}
@@ -140,19 +161,22 @@ for(my $Qdesign = 0.01; $Qdesign < $low->{'5'}; $Qdesign += 0.01){
 		my $speed = $_;
 		foreach my $turbine (@{$turbines->{$speed}}){
 			my $last = 100;
+			my $loss = 0;
 			foreach my $key (sort{$b <=> $a}keys (%$low)){
 				my $Q = $low->{$key} < $Qdesign ? $low->{$key} : $Qdesign;
 				my ($p,$hn) = power($Q,$key);
 				my $eff = eff($Qdesign,$Q,$turbine);
 				$energy->{$turbine} += (($last-$key)/100)*$p*$eff;
 				$last = $key;
+				$loss = 1 - $hn/$hg if $loss < 1 - $hn/$hg && $hn != 0;
 			}
 			unless ($answer->{$speed}->{'low'}->{$turbine}->{'nrg'}
-				> $energy->{$turbine}){
+				> $energy->{$turbine}*8760){
 			 	$answer->{$speed}->{'low'}->{$turbine}->{'nrg'}
-					= $energy->{$turbine};
+					= $energy->{$turbine} * 8760;
 				$answer->{$speed}->{'low'}->{$turbine}->{'QDesign'} = $Qdesign;
 				$answer->{$speed}->{'low'}->{$turbine}->{'exceed'} = $exceed;
+				$answer->{$speed}->{'low'}->{$turbine}->{'head loss'} = $loss;
 				$energy->{$turbine} = 0;
 			}
 		}
@@ -241,12 +265,13 @@ sub power {
 	my $hn = $hg-$ht-$hf ;
 	# if the nethead/grosshead is less than 0.9 then we need to consider a
 	# fatter pipe.
-	die 'Warning unaccaptable losses ', $hn/$hg,
-									" remains try a fatter pipe \n" 
-		if $hn/$hg < 0.9;
+#	warn 'Warning unaccaptable losses ',1-$hn/$hg,
+#									" loss try a fatter pipe \n" 
+#		if $hn/$hg < 0.9;
 	# now we can calulate the input power to the turbine at this flowrate
-	# and return it.
-	return (10*$Q*$hn,$hn);
+	# and return it. This is given by Gamma x Q x h where Gamma is 9.804
+	# at 10 degrees C
+	return (9.804*$Q*$hn,$hn);
 }
 
 # we need to take into account the flow regime allowed. We're not allowed
@@ -289,8 +314,11 @@ sub colebrook {
 		while ($f > $fn){
 			$fn = (1/(-2.0*log10($eps/(3.7*$dia)+2.51/($Re*$f**0.5))))**2;
 			$f = $f - $step unless $f < $fn;
+	#		print "F =$f \n";
 		}
+	$f += $step;
 	$step = $step/10;
+	#print "Fn = $fn F = $f\n";
 	}
 	return $fn;
 }
